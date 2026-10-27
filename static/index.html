@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CineSense</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,800&family=Manrope:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top" id="top">
+  <a class="logo" href="/"><span class="dots"><i></i><i></i><i></i></span>CineSense</a>
+  <nav id="nav" hidden><button data-view="rec">For you</button><button data-view="diary">Diary</button><button data-view="watchlist">Watchlist</button><button data-view="taste">My taste</button><button data-view="search">Search</button></nav>
+  <div id="who" hidden><span class="av" id="av"></span><button id="logout" class="ghost">Log out</button></div>
+</header>
+<main>
+  <section id="auth" class="landing">
+    <div class="wall" id="wall" aria-hidden="true"></div>
+    <div class="pitch">
+      <h1>Your next favourite film already knows you.</h1>
+      <p class="sub">Rate what you watch. CineSense learns your taste, picks movies with its own scoring engine, and tells you why each one fits.</p>
+      <div class="card">
+        <div class="tabs"><button class="tab" data-tab="login" aria-selected="true">Log in</button><button class="tab" data-tab="signup" aria-selected="false">Create account</button></div>
+        <form id="login-form" class="form">
+          <label>Username<input id="l-name" autocomplete="username" required></label>
+          <label>Password<input id="l-pass" type="password" autocomplete="current-password" required></label>
+          <button class="primary">Log in</button>
+        </form>
+        <form id="signup-form" class="form" hidden>
+          <label>Username<input id="s-name" autocomplete="username" required></label>
+          <label>Email <small>for alerts about new movies you will like</small><input id="s-email" type="email" autocomplete="email"></label>
+          <label>Password<input id="s-pass" type="password" autocomplete="new-password" required></label>
+          <label>Date of birth <small>keeps results age-suitable, nothing else</small><input id="s-dob" type="date" value="2002-01-01" required></label>
+          <button class="primary">Create account</button>
+        </form>
+        <p id="auth-msg" class="msg" role="alert"></p>
+      </div>
+    </div>
+  </section>
+
+  <section id="quiz" class="wrap" hidden>
+    <div class="progress"><i id="qbar"></i></div>
+    <h1 id="qtitle" class="q"></h1><p class="sub" id="qhint"></p>
+    <div id="qopts" class="chips big"></div>
+    <div class="qnav"><button id="qback" class="ghost">Back</button><button id="qnext" class="primary">Next</button></div>
+    <p id="quiz-msg" class="msg" role="alert"></p>
+  </section>
+
+  <section id="rec" class="wrap" hidden>
+    <h1 class="q">What are you in the mood for?</h1>
+    <div id="r-mood" class="chips big"></div>
+    <div class="controls">
+      <label>Watching with<select id="r-with"></select></label>
+      <label>Streaming country<select id="country"><option>IN</option><option>US</option><option>GB</option><option>CA</option><option>AU</option></select></label>
+      <button id="go" class="primary">Find my movies</button>
+    </div>
+    <p id="rec-msg" class="msg" role="alert"></p>
+    <div id="results" class="grid"></div>
+  </section>
+
+  <section id="diary" class="wrap" hidden><div id="diary-body"></div></section>
+  <section id="watchlist" class="wrap" hidden><h1 class="q">Your watchlist</h1><div id="wl-grid" class="grid"></div></section>
+  <section id="taste" class="wrap" hidden><div id="taste-body"></div></section>
+
+  <section id="search" class="wrap" hidden>
+    <h1 class="q">Describe a movie, we'll find it.</h1>
+    <form id="search-form" class="searchbar"><input id="q" placeholder="a slow-burn sci-fi about time and family" aria-label="Describe a movie"><button class="primary">Search</button></form>
+    <p id="search-msg" class="msg" role="alert"></p>
+    <div id="search-results" class="grid"></div>
+  </section>
+</main>
+<dialog id="modal"></dialog>
+<div id="toast" role="status"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
