@@ -8,7 +8,7 @@ Double-click `START.bat`. On first run it installs the packages, asks for option
 
 ## Deploy the website
 
-The static frontend is published to GitHub Pages by `.github/workflows/pages.yml` whenever changes are pushed to `main`. The workflow enables Pages for the repository when needed.
+The static frontend is published to GitHub Pages by `.github/workflows/pages.yml` whenever changes are pushed to `main`. Before the first deployment, open **Settings → Pages** and select **GitHub Actions** as the build and deployment source.
 
 The Pages frontend needs the Python services hosted separately; GitHub Pages cannot run FastAPI or the AI model. `render.yaml` defines two Render web services (API and AI) and persistent storage for the user database. Deploy the blueprint from the Render dashboard and set the prompted secrets there:
 
