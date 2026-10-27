@@ -6,10 +6,11 @@ const starsText = v => "★".repeat(Math.floor(v)) + (v % 1 ? "½" : "");
 let marks = { watchlist: [], like: [] };
 const marked = (k, id) => marks[k].some(x => x.id === id);
 const EMO = { Funny: "😄", Emotional: "💔", Exciting: "⚡", Relaxing: "😌", "Thought-provoking": "🧠", "Surprise me": "🎲" };
+const API_BASE = (window.CINESENSE_API_URL || "").replace(/\/+$/, "");
 let token = localStorage.getItem("token"), me = null, movies = {}, qa = {}, qi = 0;
 
 async function api(path, body) {
-  const res = await fetch("/api" + path, { method: body === undefined ? "GET" : "POST",
+  const res = await fetch(API_BASE + "/api" + path, { method: body === undefined ? "GET" : "POST",
     headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body) });
   const d = await res.json().catch(() => ({}));
@@ -46,7 +47,7 @@ $("#logout").onclick = signOut;
 // ---------- landing wall + auth ----------
 async function loadWall() {
   try {
-    const m = (await (await fetch("/api/showcase")).json()).movies.filter(x => x.poster_path), cols = [[], [], [], [], []];
+    const m = (await (await fetch(API_BASE + "/api/showcase")).json()).movies.filter(x => x.poster_path), cols = [[], [], [], [], []];
     m.forEach((x, i) => cols[i % 5].push(`<img src="${IMG}w185${x.poster_path}" alt="">`));
     $("#wall").innerHTML = cols.map(c => `<div>${c.join("")}${c.join("")}</div>`).join("");
   } catch { /* wall is decoration only */ }
