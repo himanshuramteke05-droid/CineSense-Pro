@@ -10,7 +10,7 @@ services:
       - key: LLM_PROVIDER
         value: gemini
       - key: GEMINI_MODEL
-        value: gemini-2.5-flash
+        value: gemini-2.0-flash
       - key: GEMINI_API_KEY
         sync: false
 
@@ -20,7 +20,7 @@ services:
     plan: standard
     buildCommand: python -m pip install -r requirements.txt
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /
+    healthCheckPath: /health
     disk:
       name: cinesense-data
       mountPath: /var/data

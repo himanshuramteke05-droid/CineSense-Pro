@@ -69,7 +69,7 @@ def main():
     faiss.write_index(index, str(OUT / "movies.faiss"))
     df[KEEP].to_pickle(OUT / "movies.pkl")
     (OUT / "model.txt").write_text(a.model)
-    print("Done. Now run: streamlit run app.py")
+    print("Done. Now run START.bat to start CineSense.")
 
 
 if __name__ == "__main__":

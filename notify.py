@@ -2,7 +2,6 @@
 import os
 import re
 import smtplib
-import traceback
 from html import escape
 from datetime import date
 from email.message import EmailMessage
@@ -14,6 +13,7 @@ import engine
 
 GID = {28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy", 80: "Crime", 18: "Drama", 10751: "Family",
        14: "Fantasy", 27: "Horror", 9648: "Mystery", 10749: "Romance", 878: "Science Fiction", 53: "Thriller"}
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def fresh_movies(region="IN"):
@@ -27,30 +27,35 @@ def fresh_movies(region="IN"):
         p["api_key"] = key
     out = {}
     for kind in ("upcoming", "now_playing"):
-        r = requests.get(f"https://api.tmdb.org/3/movie/{kind}", headers=h, params=p, timeout=12)
-        r.raise_for_status()
-        for m in r.json().get("results", []):
-            if m.get("poster_path") and m.get("overview"):
-                m["genres"] = [GID[g] for g in m.get("genre_ids", []) if g in GID]
-                out[m["id"]] = m
+        try:
+            r = requests.get(f"https://api.tmdb.org/3/movie/{kind}", headers=h, params=p, timeout=12)
+            r.raise_for_status()
+            for m in r.json().get("results", []):
+                if m.get("poster_path") and m.get("overview"):
+                    m["genres"] = [GID[g] for g in m.get("genre_ids", []) if g in GID]
+                    out[m["id"]] = m
+        except Exception:
+            continue
     return list(out.values())
 
 
 def match(m, profile, prefs, age):
     """Genre-match score 0..1, or None if this movie must not be sent to this user."""
-    gs = m["genres"]
+    gs = m.get("genres") or []
     if not gs or any(g in prefs.get("avoid", []) for g in gs):
         return None
     if age is not None and age < 13 and any(g in engine.SENSITIVE for g in gs):
         return None
     if prefs.get("langs") and m.get("original_language") not in prefs["langs"]:
         return None
-    return sum(profile.get(g, .3) for g in gs) / len(gs)
+    return sum(profile.get(g, 0.3) for g in gs) / len(gs)
 
 
 def send(to, name, picks):
-    host, user, pw = os.getenv("SMTP_HOST", "smtp.gmail.com"), os.getenv("SMTP_USER", ""), os.getenv("SMTP_PASS", "")
-    port = int(os.getenv("SMTP_PORT", "465"))
+    host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    user = os.getenv("SMTP_USER", "")
+    pw = os.getenv("SMTP_PASS", "")
+    port = int(os.getenv("SMTP_PORT", "587"))
     sender = os.getenv("SMTP_FROM", user)
     
     if not (host and user and pw):
@@ -67,7 +72,7 @@ def send(to, name, picks):
     msg["Subject"] = f"{picks[0][1]['title']} and {len(picks) - 1} more movies picked for you" if len(picks) > 1 else f"New for you: {picks[0][1]['title']}"
     msg["From"], msg["To"] = sender, to
     msg.set_content("New movies matching your taste are out. Open CineSense to see them.")
-    msg.add_alternative(f'<div style="font-family:Arial;max-width:560px"><h2>Hi {name.title()}, new movies for your taste</h2>'
+    msg.add_alternative(f'<div style="font-family:Arial;max-width:560px"><h2>Hi {escape(name.title())}, new movies for your taste</h2>'
                         f'<table>{rows}</table><p style="color:#888">Sent by CineSense because these match your Movie DNA.</p></div>', subtype="html")
     
     try:
@@ -81,19 +86,22 @@ def send(to, name, picks):
                 s.login(user, pw)
                 s.send_message(msg)
     except Exception as e:
-        raise Exception(f"Could not send: {str(e)}")
+        raise Exception(f"Could not send email: {str(e)}")
 
 
 def run(only_uid=None, test=False):
     movies = fresh_movies()
-    bar, sent_total, users_mailed, errors = (.5 if test else .72), 0, 0, []
+    bar, sent_total, users_mailed, errors = (0.5 if test else 0.72), 0, 0, []
     for row in ([{"id": only_uid}] if only_uid else db.users_with_email()):
         u = db.get_user(row["id"])
         if not u or not u["email"] or "base" not in u["prefs"]:
             continue
         hist = db.get_history(u["id"])
         profile, _ = engine.learn(u["prefs"]["base"], hist)
-        age = (date.today() - date.fromisoformat(u["dob"])).days // 365
+        try:
+            age = (date.today() - date.fromisoformat(u["dob"])).days // 365 if u.get("dob") else None
+        except Exception:
+            age = None
         seen = set() if test else db.sent_ids(u["id"])
         picks = []
         for m in movies:
@@ -114,6 +122,3 @@ def run(only_uid=None, test=False):
             sent_total += len(picks)
             users_mailed += 1
     return {"emails_sent": users_mailed, "movies_included": sent_total, "checked_movies": len(movies), "errors": errors}
-
-
-EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")

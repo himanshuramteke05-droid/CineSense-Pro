@@ -2,11 +2,11 @@
 import os
 import requests
 
-# Jio/Airtel Block bypass karne ke liye TMDB ka alternate domain
 BASE = "https://api.tmdb.org/3"
 
+
 def details(tmdb_id, country="IN"):
-    """None if no TMDB_API_KEY is set."""
+    """Returns movie metadata, cast, trailer, and OTT availability. None if TMDB_API_KEY is not set or movie not found."""
     key = os.getenv("TMDB_API_KEY", "").strip()
     if not key:
         return None
@@ -16,18 +16,32 @@ def details(tmdb_id, country="IN"):
     else:
         params["api_key"] = key
         
-    r = requests.get(f"{BASE}/movie/{tmdb_id}", headers=headers, params=params, timeout=12)
-    r.raise_for_status()
-    d = r.json()
+    try:
+        r = requests.get(f"{BASE}/movie/{tmdb_id}", headers=headers, params=params, timeout=12)
+        r.raise_for_status()
+        d = r.json()
+    except Exception:
+        return None
     
-    cast = [{"name": c["name"], "role": c.get("character", ""), "img": c.get("profile_path")}
+    cast = [{"name": c.get("name", ""), "role": c.get("character", ""), "img": c.get("profile_path")}
             for c in d.get("credits", {}).get("cast", [])[:14]]
-    director = next((c["name"] for c in d.get("credits", {}).get("crew", []) if c.get("job") == "Director"), "")
-    vids = [v for v in d.get("videos", {}).get("results", []) if v["site"] == "YouTube" and v["type"] in ("Trailer", "Teaser")]
-    vids.sort(key=lambda v: v["type"] != "Trailer")
-    wp = d.get("watch/providers", {}).get("results", {}).get(country, {})
-    prov = lambda k: [{"name": p["provider_name"], "logo": p.get("logo_path")} for p in wp.get(k, [])]
+    director = next((c.get("name", "") for c in d.get("credits", {}).get("crew", []) if c.get("job") == "Director"), "")
+    vids = [v for v in d.get("videos", {}).get("results", []) if v.get("site") == "YouTube" and v.get("type") in ("Trailer", "Teaser")]
+    vids.sort(key=lambda v: v.get("type") != "Trailer")
     
-    return {"tagline": d.get("tagline", ""), "backdrop": d.get("backdrop_path"), "cast": cast, "director": director,
-            "trailer": vids[0]["key"] if vids else None,
-            "stream": prov("flatrate"), "rent": prov("rent"), "buy": prov("buy"), "link": wp.get("link")}
+    # Safe retrieval of country providers (TMDB sometimes returns {"results": {"IN": null}})
+    wp_results = d.get("watch/providers", {}).get("results", {})
+    wp = (wp_results.get(country) if wp_results else None) or {}
+    prov = lambda k: [{"name": p.get("provider_name", ""), "logo": p.get("logo_path")} for p in (wp.get(k) or [])]
+    
+    return {
+        "tagline": d.get("tagline", ""),
+        "backdrop": d.get("backdrop_path"),
+        "cast": cast,
+        "director": director,
+        "trailer": vids[0]["key"] if vids else None,
+        "stream": prov("flatrate"),
+        "rent": prov("rent"),
+        "buy": prov("buy"),
+        "link": wp.get("link")
+    }

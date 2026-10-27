@@ -17,7 +17,7 @@ def make_env():
     gemini = input("Gemini API key (press Enter to skip): ").strip()
     print("'Where to watch' needs a free TMDB key: https://www.themoviedb.org/settings/api")
     tmdb = input("TMDB API key (press Enter to skip): ").strip()
-    env.write_text(f"LLM_PROVIDER=gemini\nGEMINI_API_KEY={gemini}\nGEMINI_MODEL=gemini-2.5-flash\nTMDB_API_KEY={tmdb}\nSMTP_HOST=smtp.gmail.com\nSMTP_PORT=587\nSMTP_USER=\nSMTP_PASS=\nSMTP_FROM=\n")
+    env.write_text(f"LLM_PROVIDER=gemini\nGEMINI_API_KEY={gemini}\nGEMINI_MODEL=gemini-2.0-flash\nTMDB_API_KEY={tmdb}\nSMTP_HOST=smtp.gmail.com\nSMTP_PORT=587\nSMTP_USER=\nSMTP_PASS=\nSMTP_FROM=\n")
 
 
 def find_dataset():

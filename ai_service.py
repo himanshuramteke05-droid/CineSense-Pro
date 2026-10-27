@@ -1,4 +1,4 @@
-"""AI SERVICE (port 8001): embeddings + FAISS retrieval (RAG) + LLM. It knows nothing about users or the website."""
+"""AI SERVICE (port 8001): embeddings + FAISS retrieval (RAG) + LLM."""
 import json
 import os
 import re
@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 
 load_dotenv()
-DATA = Path("index_data")
+DATA = Path(__file__).parent / "index_data"
 PROVIDER = os.getenv("LLM_PROVIDER", "gemini").lower()
 
 app = FastAPI(title="CineSense AI service")
@@ -40,11 +40,9 @@ def ask_llm(prompt):
         if not key:
             raise RuntimeError("GEMINI_API_KEY is empty in the .env file")
         client, last = genai.Client(api_key=key), None
-        chain = [os.getenv("GEMINI_MODEL", "gemini-2.5-flash"), "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-flash-latest"]
+        chain = [os.getenv("GEMINI_MODEL", "gemini-2.0-flash"), "gemini-1.5-flash", "gemini-2.0-flash-lite", "gemini-flash-latest"]
         for name in dict.fromkeys(chain):                      # try each model, retry busy/rate-limited calls
             kw = dict(response_mime_type="application/json", temperature=0.6)
-            if "2.5" in name:
-                kw["thinking_config"] = types.ThinkingConfig(thinking_budget=0)   # no slow "thinking" for a short answer
             for attempt in range(4):
                 try:
                     txt = client.models.generate_content(model=name, contents=prompt,
@@ -115,36 +113,64 @@ def llm_check():
 def retrieve(r: Retrieve):
     """Semantic search (FAISS). Also returns each candidate's similarity to the user's latest watched movie."""
     sims, ids = index.search(embed(r.text), r.n)
-    ok = ids[0] >= 0
+    ok = (ids[0] >= 0) & (ids[0] < len(movies))
     c = movies.iloc[ids[0][ok]].copy()
     c["sim"] = sims[0][ok]
     c = c[~c["id"].isin(r.exclude_ids)]
     c["latest_sim"] = 0.0
     row = ID_ROW.get(r.latest_id)
     if row is not None and len(c):
-        lv = index.reconstruct(row)
-        c["latest_sim"] = np.stack([index.reconstruct(int(i)) for i in c.index]) @ lv
+        try:
+            lv = index.reconstruct(row)
+            candidate_rows = [ID_ROW[int(mid)] for mid in c["id"] if int(mid) in ID_ROW]
+            if len(candidate_rows) == len(c):
+                c["latest_sim"] = np.stack([index.reconstruct(i) for i in candidate_rows]) @ lv
+        except Exception:
+            c["latest_sim"] = 0.0
     return {"candidates": records(c)}
 
 
 @app.get("/search")
 def search(q: str, k: int = 6):
-    sims, ids = index.search(embed(q), k)
-    d = movies.iloc[ids[0]].copy()
-    d["sim"] = sims[0]
+    sims, ids = index.search(embed(q), max(1, k))
+    ok = (ids[0] >= 0) & (ids[0] < len(movies))
+    d = movies.iloc[ids[0][ok]].copy()
+    d["sim"] = sims[0][ok]
     return {"movies": records(d)}
 
 
 @app.post("/explain")
 def explain(r: Explain):
     """RAG + GenAI: retrieved movie info and user context go to the LLM, which explains each pick."""
+    if not r.items:
+        return {"reasons": {}}
     lines = "\n".join(f"{i}. {m.title} ({m.year}) [{m.genres}] {m.overview[:300]}" for i, m in enumerate(r.items, 1))
-    prompt = ("You are CineSense, a movie recommendation assistant.\n" + r.context +
+    prompt = ("You are CineSense, a movie recommendation assistant.\n" + (r.context or "") +
               "\n\nFor each numbered movie below write ONE sentence (max 30 words) addressed to the user "
               "('you') explaining why it fits their taste and mood. Use only the movie info given; do not invent facts.\n"
               f"{lines}\n\nReturn ONLY JSON like " + '{"1": "reason", "2": "reason"}')
     try:
-        raw = re.search(r"\{.*\}", ask_llm(prompt), re.S).group()
-        return {"reasons": {str(k): str(v) for k, v in json.loads(raw).items()}}
+        reply = ask_llm(prompt).strip()
+        if "```" in reply:
+            reply = re.sub(r"^```(?:json)?\s*", "", reply.strip(), flags=re.MULTILINE)
+            reply = re.sub(r"\s*```$", "", reply.strip(), flags=re.MULTILINE)
+        m = re.search(r"\{.*\}", reply, re.S)
+        raw = m.group() if m else reply
+        parsed = json.loads(raw)
+        reasons = {}
+        if isinstance(parsed, dict):
+            for k, v in parsed.items():
+                if k == "reasons" and isinstance(v, dict):
+                    for subk, subv in v.items():
+                        reasons[str(subk)] = str(subv)
+                elif k == "reasons" and isinstance(v, list):
+                    for idx, val in enumerate(v, 1):
+                        reasons[str(idx)] = str(val)
+                else:
+                    reasons[str(k)] = str(v)
+        elif isinstance(parsed, list):
+            for idx, val in enumerate(parsed, 1):
+                reasons[str(idx)] = str(val)
+        return {"reasons": reasons}
     except Exception as e:
         raise HTTPException(502, f"{type(e).__name__}: {str(e)[:200]}")

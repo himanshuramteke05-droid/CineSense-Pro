@@ -6,6 +6,7 @@ import secrets
 import threading
 import time
 from datetime import date
+from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
@@ -22,7 +23,7 @@ import notify
 import ott
 
 load_dotenv()
-AI = os.getenv("AI_URL", "http://127.0.0.1:8001")
+AI = os.getenv("AI_URL", "http://127.0.0.1:8001").rstrip("/")
 LANGS = {"en": "English", "hi": "Hindi", "ta": "Tamil", "te": "Telugu", "ml": "Malayalam", "kn": "Kannada",
          "bn": "Bengali", "mr": "Marathi", "pa": "Punjabi", "ko": "Korean", "ja": "Japanese", "fr": "French",
          "es": "Spanish"}
@@ -30,14 +31,25 @@ WITH = ["Myself", "Friends", "Family", "Partner", "Children", "Everyone"]
 LAST = {}      # user id -> context of their latest recommendation (for /api/explain)
 SESSIONS = {}  # token -> user id (cleared when the server restarts)
 db.init()
+
 app = FastAPI(title="CineSense")
+
+# Configure CORS cleanly for production GitHub Pages and local development
+cors_origins_env = os.getenv("CINESENSE_CORS_ORIGINS", "").strip()
+if cors_origins_env and cors_origins_env != "*":
+    allow_origins = [origin.strip().rstrip("/") for origin in cors_origins_env.split(",") if origin.strip()]
+    for dev_host in ["http://localhost:8000", "http://127.0.0.1:8000", "http://localhost:3000", "http://127.0.0.1:5500"]:
+        if dev_host not in allow_origins:
+            allow_origins.append(dev_host)
+else:
+    allow_origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip().rstrip("/") for origin in os.getenv("CINESENSE_CORS_ORIGINS", "").split(",")
-                   if origin.strip()],
-    allow_credentials=False,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_origins=allow_origins,
+    allow_credentials=True if allow_origins != ["*"] else False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -79,9 +91,11 @@ class Mark(BaseModel):
     movie: dict
 
 
-
 def current(authorization: str = Header(None)):
-    uid = SESSIONS.get((authorization or "").replace("Bearer ", "").strip())
+    token = (authorization or "").strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    uid = SESSIONS.get(token)
     user = db.get_user(uid) if uid else None
     if not user:
         raise HTTPException(401, "Please log in.")
@@ -100,10 +114,22 @@ def ai(path, payload=None, params=None):
         r = (requests.post(AI + path, json=payload, timeout=90) if payload is not None
              else requests.get(AI + path, params=params, timeout=60))
     except requests.ConnectionError:
-        raise HTTPException(503, "The AI service is not running. Start it first (use run.bat).")
+        raise HTTPException(503, "The AI service is not running. Start it first (use START.bat).")
+    except Exception as e:
+        raise HTTPException(502, f"AI service error: {str(e)[:150]}")
     if r.status_code != 200:
-        raise HTTPException(502, str(r.json().get("detail", "AI service error")))
+        detail = "AI service error"
+        try:
+            detail = r.json().get("detail", detail)
+        except Exception:
+            pass
+        raise HTTPException(502, str(detail))
     return r.json()
+
+
+@app.get("/health")
+def health():
+    return {"ok": True, "service": "cinesense-api"}
 
 
 @app.post("/api/register")
@@ -132,8 +158,8 @@ def login(a: Auth):
 
 @app.get("/api/me")
 def me(u=Depends(current)):
-    return {"name": u["name"].title(), "email": u["email"], "has_quiz": "base" in u["prefs"], "moods": list(engine.MOODS),
-            "genres": engine.GENRES, "times": list(engine.TIMES), "langs": LANGS, "with": WITH}
+    return {"name": u["name"].title(), "email": u["email"], "has_quiz": "base" in (u.get("prefs") or {}),
+            "moods": list(engine.MOODS), "genres": engine.GENRES, "times": list(engine.TIMES), "langs": LANGS, "with": WITH}
 
 
 @app.post("/api/quiz")
@@ -153,37 +179,41 @@ def quiz_reset(u=Depends(current)):
 
 @app.post("/api/recommend")
 def recommend(req: Rec, u=Depends(current)):
-    prefs = u["prefs"]
+    prefs = u.get("prefs") or {}
     if "base" not in prefs:
         raise HTTPException(400, "Please take the quiz first.")
     if req.mood not in engine.MOODS:
         raise HTTPException(400, "Unknown mood.")
     hist = db.get_history(u["id"])
-    age = (date.today() - date.fromisoformat(u["dob"])).days // 365
-    profile, _ = engine.learn(prefs["base"], hist)                       # pattern learning
+    try:
+        age = (date.today() - date.fromisoformat(u["dob"])).days // 365 if u.get("dob") else None
+    except Exception:
+        age = None
+    profile, _ = engine.learn(prefs["base"], hist)
     top = sorted(profile, key=profile.get, reverse=True)[:3]
-    found = ai("/retrieve", {"text": f"{engine.MOODS[req.mood][1]}. Genres: {', '.join(top)}",   # RAG retrieval
+    found = ai("/retrieve", {"text": f"{engine.MOODS[req.mood][1]}. Genres: {', '.join(top)}",
                              "latest_id": hist[-1]["mid"] if hist else None,
                              "exclude_ids": [h["mid"] for h in hist], "n": 500})
-    cands = pd.DataFrame(found["candidates"])
+    cands = pd.DataFrame(found.get("candidates", []))
     if cands.empty:
         return {"movies": [], "ai_error": None}
-    ranked = engine.rank(cands, profile, req.mood, engine.pref_runtime(hist, prefs.get("time")),     # recommendation engine
+    ranked = engine.rank(cands, profile, req.mood, engine.pref_runtime(hist, prefs.get("time")),
                          prefs.get("langs", []), age, prefs.get("avoid", [])).head(max(1, min(req.k, 10)))
     movies = json.loads(ranked.to_json(orient="records"))
-    liked = [h["title"] for h in hist if h["rating"] >= 4][-5:]
+    liked = [h["title"] for h in hist if float(h.get("rating", 0)) >= 4.0][-5:]
     LAST[u["id"]] = ("User taste (genre preference 0-1): " + ", ".join(f"{g} {profile[g]:.2f}" for g in top)
                      + f". Mood today: {req.mood}. Watching with: {req.with_}. "
                      + f"Recently loved: {', '.join(liked) or 'nothing yet (new user)'}.")
-    for m in movies:                       # instant fallback reason; real AI reasons arrive via /api/explain
-        m["why"] = engine.reason(m["genres"], profile)
-        m["strength"] = round(min(1.0, m["score"] / .8), 2)
+    for m in movies:
+        m["why"] = engine.reason(m.get("genres"), profile)
+        score_val = float(m.get("score", 0.5))
+        m["strength"] = round(min(1.0, max(0.0, score_val / 0.8)), 2)
     return {"movies": movies}
 
 
 @app.post("/api/rate")
 def rate(r: Rate, u=Depends(current)):
-    if not 0.5 <= r.rating <= 5 or (r.rating * 2) % 1:
+    if not 0.5 <= r.rating <= 5.0 or (r.rating * 2.0) % 1.0:
         raise HTTPException(400, "Rating must be 0.5 to 5 in half-star steps.")
     db.add_history(u["id"], SimpleNamespace(id=r.id, title=r.title, genres=r.genres, runtime=r.runtime), r.rating,
                    r.review.strip()[:2000], r.poster_path)
@@ -215,7 +245,8 @@ def diary(u=Depends(current)):
 @app.get("/api/taste")
 def taste(u=Depends(current)):
     hist = db.get_history(u["id"])
-    profile, _ = engine.learn(u["prefs"].get("base", {}), hist)
+    base = u.get("prefs", {}).get("base") or engine.initial_profile("Surprise me", [], [])
+    profile, _ = engine.learn(base, hist)
     top = sorted(profile.items(), key=lambda kv: -kv[1])[:8]
     return {"confidence": engine.confidence_label(len(hist)), "count": len(hist),
             "profile": [{"genre": g, "score": round(s, 2)} for g, s in top],
@@ -229,25 +260,25 @@ class ExplainReq(BaseModel):
 
 @app.post("/api/explain")
 def explain(r: ExplainReq, u=Depends(current)):
-    items = [{"title": m.get("title", ""), "year": m.get("year", 0), "genres": m.get("genres", ""),
-              "overview": m.get("overview", "")} for m in r.items[:10]]
+    items = [{"title": m.get("title", ""), "year": int(m.get("year") or 0), "genres": str(m.get("genres") or ""),
+              "overview": str(m.get("overview") or "")} for m in r.items[:10]]
     return ai("/explain", {"context": LAST.get(u["id"], ""), "items": items})
 
 
 @app.get("/api/movie/{mid}")
 def movie(mid: int, country: str = "IN", u=Depends(current)):
-    try:
-        d = ott.details(mid, country)
-    except Exception:
-        raise HTTPException(502, "Could not reach TMDB right now.")
-    return {"configured": d is not None, **(d or {})}
+    d = ott.details(mid, country)
+    if d is None:
+        return {"configured": False, "tagline": "", "backdrop": None, "cast": [], "director": "",
+                "trailer": None, "stream": [], "rent": [], "buy": [], "link": None}
+    return {"configured": True, **d}
 
 
 @app.get("/api/showcase")
 def showcase():
     try:
         return ai("/search", params={"q": "acclaimed epic blockbuster film", "k": 24})
-    except HTTPException:
+    except Exception:
         return {"movies": []}
 
 
@@ -285,7 +316,7 @@ def _daily():
         time.sleep(86400)
 
 
-if os.getenv("NOTIFY_DAILY", "1") == "1":
+if os.getenv("NOTIFY_DAILY", "0") == "1":
     threading.Thread(target=_daily, daemon=True).start()
 
 
@@ -294,5 +325,7 @@ def search(q: str, u=Depends(current)):
     return ai("/search", params={"q": q, "k": 6})
 
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
-app.mount("/", StaticFiles(directory="static", html=True), name="site")
+static_dir = Path(__file__).parent / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="site")

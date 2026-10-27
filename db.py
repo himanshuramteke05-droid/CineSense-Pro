@@ -1,6 +1,7 @@
 """SQLite storage: users, quiz preferences and watch history (file: cinesense.db)."""
 import hashlib
 import json
+import math
 import os
 import sqlite3
 import time
@@ -10,8 +11,13 @@ DB = os.getenv("CINESENSE_DB_PATH", "cinesense.db")
 
 
 def _con():
-    c = sqlite3.connect(DB)
+    c = sqlite3.connect(DB, timeout=30.0)
     c.row_factory = sqlite3.Row
+    try:
+        c.execute("PRAGMA journal_mode=WAL;")
+        c.execute("PRAGMA synchronous=NORMAL;")
+    except sqlite3.OperationalError:
+        pass
     return c
 
 
@@ -21,7 +27,7 @@ def init():
         CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, name TEXT UNIQUE, salt BLOB,
             pw TEXT, dob TEXT, prefs TEXT DEFAULT '{}');
         CREATE TABLE IF NOT EXISTS history(id INTEGER PRIMARY KEY, uid INTEGER, mid INTEGER,
-            title TEXT, genres TEXT, runtime INTEGER, rating INTEGER, ts REAL, note TEXT);
+            title TEXT, genres TEXT, runtime INTEGER, rating REAL, ts REAL, note TEXT);
         CREATE TABLE IF NOT EXISTS marks(uid INTEGER, mid INTEGER, kind TEXT, data TEXT, ts REAL, PRIMARY KEY(uid, mid, kind));
         CREATE TABLE IF NOT EXISTS sent(uid INTEGER, mid INTEGER, PRIMARY KEY(uid, mid));""")
         try:
@@ -53,19 +59,33 @@ def login(name, pw):
     with closing(_con()) as c:
         r = c.execute("SELECT * FROM users WHERE name=?", (name.strip().lower(),)).fetchone()
     if r and _hash(pw, r["salt"]) == r["pw"]:
-        return {"id": r["id"], "name": r["name"], "dob": r["dob"], "email": r["email"] or "", "prefs": json.loads(r["prefs"])}
+        try:
+            prefs = json.loads(r["prefs"] or "{}")
+        except Exception:
+            prefs = {}
+        return {"id": r["id"], "name": r["name"], "dob": r["dob"], "email": r["email"] or "", "prefs": prefs}
     return None
 
 
 def save_prefs(uid, prefs):
     with closing(_con()) as c, c:
-        c.execute("UPDATE users SET prefs=? WHERE id=?", (json.dumps(prefs), uid))
+        c.execute("UPDATE users SET prefs=? WHERE id=?", (json.dumps(prefs or {}), uid))
 
 
 def add_history(uid, m, rating, note="", poster=""):
+    mid = int(m.id)
+    title = str(getattr(m, "title", "") or "")
+    genres = str(getattr(m, "genres", "") or "")
+    try:
+        runtime_val = getattr(m, "runtime", 0)
+        runtime = int(runtime_val) if runtime_val and not (isinstance(runtime_val, float) and math.isnan(runtime_val)) else 0
+    except (ValueError, TypeError):
+        runtime = 0
     with closing(_con()) as c, c:
+        # Check if already rated/recorded for this user to avoid duplicates
+        c.execute("DELETE FROM history WHERE uid=? AND mid=?", (uid, mid))
         c.execute("INSERT INTO history(uid, mid, title, genres, runtime, rating, ts, note, poster) VALUES(?,?,?,?,?,?,?,?,?)",
-                  (uid, int(m.id), m.title, m.genres, int(m.runtime), float(rating), time.time(), note, poster))
+                  (uid, mid, title, genres, runtime, float(rating), time.time(), note or "", poster or ""))
 
 
 def get_history(uid):
@@ -78,7 +98,13 @@ def get_history(uid):
 def get_user(uid):
     with closing(_con()) as c:
         r = c.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
-    return {"id": r["id"], "name": r["name"], "dob": r["dob"], "email": r["email"] or "", "prefs": json.loads(r["prefs"])} if r else None
+    if not r:
+        return None
+    try:
+        prefs = json.loads(r["prefs"] or "{}")
+    except Exception:
+        prefs = {}
+    return {"id": r["id"], "name": r["name"], "dob": r["dob"], "email": r["email"] or "", "prefs": prefs}
 
 
 def set_email(uid, email):
@@ -116,5 +142,9 @@ def get_marks(uid):
         rows = c.execute("SELECT kind, data FROM marks WHERE uid=? ORDER BY ts DESC", (uid,)).fetchall()
     out = {"watchlist": [], "like": []}
     for r in rows:
-        out.setdefault(r["kind"], []).append(json.loads(r["data"]))
+        try:
+            d = json.loads(r["data"]) if r["data"] else {}
+            out.setdefault(r["kind"], []).append(d)
+        except Exception:
+            pass
     return out
