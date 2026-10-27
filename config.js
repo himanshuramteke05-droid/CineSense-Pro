@@ -1,1 +1,3 @@
-window.CINESENSE_API_URL = "https://cinesense-api.onrender.com";
+window.CINESENSE_API_URL = window.location.hostname.includes("github.io")
+  ? "https://grande-distinct-looksmart-perspective.trycloudflare.com"
+  : "";
