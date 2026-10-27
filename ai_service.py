@@ -40,7 +40,7 @@ def ask_llm(prompt):
         if not key:
             raise RuntimeError("GEMINI_API_KEY is empty in the .env file")
         client, last = genai.Client(api_key=key), None
-        chain = [os.getenv("GEMINI_MODEL", "gemini-2.0-flash"), "gemini-1.5-flash", "gemini-2.0-flash-lite", "gemini-flash-latest"]
+        chain = [os.getenv("GEMINI_MODEL", "gemini-flash-latest"), "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-3.8-flash"]
         for name in dict.fromkeys(chain):                      # try each model, retry busy/rate-limited calls
             kw = dict(response_mime_type="application/json", temperature=0.6)
             for attempt in range(4):
