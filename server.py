@@ -12,7 +12,7 @@ import pandas as pd
 import requests
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -31,6 +31,14 @@ LAST = {}      # user id -> context of their latest recommendation (for /api/exp
 SESSIONS = {}  # token -> user id (cleared when the server restarts)
 db.init()
 app = FastAPI(title="CineSense")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[origin.strip().rstrip("/") for origin in os.getenv("CINESENSE_CORS_ORIGINS", "").split(",")
+                   if origin.strip()],
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 
 class Auth(BaseModel):
@@ -286,9 +294,5 @@ def search(q: str, u=Depends(current)):
     return ai("/search", params={"q": q, "k": 6})
 
 
-@app.get("/")
-def home():
-    return FileResponse("static/index.html")
-
-
 app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/", StaticFiles(directory="static", html=True), name="site")

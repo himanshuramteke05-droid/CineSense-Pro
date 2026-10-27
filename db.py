@@ -6,7 +6,7 @@ import sqlite3
 import time
 from contextlib import closing
 
-DB = "cinesense.db"
+DB = os.getenv("CINESENSE_DB_PATH", "cinesense.db")
 
 
 def _con():
